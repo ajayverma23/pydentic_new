@@ -18,7 +18,6 @@ Output Storage
 Use a dictionary or structured object to store each agent's output for reference and cross-verification.
 
 TBC:
-one agent to verify context if not clear it can generate better context
 
 '''
 
@@ -64,22 +63,54 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # Make sure to use the correct path and forward slashes or raw string
-load_dotenv(override=True, dotenv_path='D:/Aj/GenAI/pydenticAI/.env')
+load_dotenv(override=True, dotenv_path="D:/Aj/GenAI/pydentic_new/.env")
 
 from agents.app_pdf_utils import markdown_to_html, html_to_pdf, img_url_to_base64, slugify, \
-dedupe_lines, img_file_to_base64, extract_url_from_output, log_status, generate_ppt_from_content_request, log_inputs
+dedupe_lines, img_file_to_base64, extract_url_from_output, log_status, generate_ppt_from_content_request, log_inputs,\
+HARDCODED_PROMPTS, get_final_prompts
 
 
 class MultiLevelCrewAI:
     def __init__(self):
+
+        self.llms = {}
+        self.reload_llms()
+
+    def reload_llms(self):
         self.llms = {
             "GPT": ChatOpenAI(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY")),
-            #"Mistral": ChatMistralAI(model="mistral/mistral-large-latest", api_key=os.getenv("MISTRAL_API_KEY")),
-            "GROQ_llama3": ChatGroq(temperature=0, model_name="groq/llama3-70b-8192", api_key=os.getenv("GROQ_API_KEY")),
+            "Mistral": ChatMistralAI(model="mistral/mistral-large-latest", api_key=os.getenv("MISTRAL_API_KEY")),
+            #"GROQ_llama3": ChatGroq(temperature=0, model_name="groq/llama3-70b-8192", api_key=os.getenv("GROQ_API_KEY")), # Limit: 6,000 TPM
+            #"GROQ_llama3": ChatGroq(temperature=0, model_name="groq/llama3-8b-8192", api_key=os.getenv("GROQ_API_KEY")),
+            #"GROQ_llama3": ChatGroq(temperature=0, model_name="groq/llama3-8b-8192", api_key=os.getenv("GROQ_API_KEY"), max_tokens=5000),
             "GROQ_google": ChatGroq(temperature=0, model_name="groq/gemma2-9b-it", api_key=os.getenv("GROQ_API_KEY")),
         }
 
+        # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+        # MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+        # GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+        #print(f"GPT:{OPENAI_API_KEY}, Mistral:{MISTRAL_API_KEY}, GROQ:{GROQ_API_KEY}")
+
+
+    def check_llms(self):
+        test_prompt = "Hello, are you available?"
+        llm_status = {}
+        for name, llm in self.llms.items():
+            try:
+                # Adjust the call according to your LLM class interface
+                response = llm.generate(test_prompt) if hasattr(llm, 'generate') else llm(test_prompt)
+                llm_status[name] = "working"
+            except Exception as e:
+                llm_status[name] = f"not working: {e}"
+        return llm_status
+    
+
+
     def run(self, content_request):
+
+        llm_status = self.check_llms()
+        print("llm_status:", llm_status)
 
         short_title = slugify(content_request.subject or "output")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -98,7 +129,7 @@ class MultiLevelCrewAI:
         output_txt_path = os.path.join(content_dir, f"{base_filename}_Metadata.txt")
         output_ppt_path = os.path.join(content_dir, f"{base_filename}_Content.pptx")
         output_userinput_path = os.path.join(content_dir, f"{base_filename}_userinput.csv")
-
+        
         agent_outputs = {}
         agent_time = {}
 
@@ -106,28 +137,42 @@ class MultiLevelCrewAI:
         level0_agents = []
         level0_tasks = []
 
+        system_prompt, user_prompt = get_final_prompts(content_request, HARDCODED_PROMPTS)
+
         review_agent = Agent(
             role="Input Review Agent",
             goal="Review and improve user inputs for content generation.",
             backstory="Expert at clarifying and enhancing content briefs.",
             llm=self.llms["GPT"]
+            #llm=self.llms["GROQ_llama3"]
         )
-        # user input revisited: user_input, reference_data, context, subject, topic
+
         review_task = Task(
             description=(
                 "Review the following user inputs for completeness and clarity. "
-                "Improve or fill in missing details for: user_input, reference_data, context, subject, topic. "
-                "Return the improved values as a JSON object with the same keys."
+                "Improve or fill in missing details for: user_input, reference_data, context, subject, topic, system_prompt, user_prompt "
+                "Additionally, search for and add the top 2-3 relevant and authoritative webpages and YouTube videos related to the content topic, "
+                "and include their URLs in the reference_data field. "
+                "Modify or expand the user_input if needed to ensure the content request is clear, detailed, and well-structured for optimal content creation. "
+                "Return the improved values as a JSON object with the same keys: user_input, reference_data, context, subject, topic, system_prompt, user_prompt"
                 f"\n\nUser Input: {content_request.user_input}"
                 f"\nReference Data: {content_request.reference_data}"
                 f"\nContext: {content_request.context}"
                 f"\nSubject: {content_request.subject}"
                 f"\nTopic: {content_request.topic}"
+                f"\nSystem Prompt: {system_prompt}"
+                f"\nUser Prompt: {user_prompt}"
+                #f"\nSystem Prompt: {content_request.system_prompt}"
+                #f"\nUser Prompt: {content_request.user_prompt}"
             ),
             agent=review_agent,
-            expected_output="Improved user inputs as a JSON object with keys: user_input, reference_data, context, subject, topic.",
+            expected_output=(
+                "Improved user inputs as a JSON object with keys: "
+                "user_input, reference_data (including new URLs), context, subject, topic, system_prompt, user_prompt"
+            ),
             output_pydantic=ImprovedInputs
         )
+
 
         level0_agents.append(review_agent)
         level0_tasks.append(review_task)
@@ -164,29 +209,47 @@ class MultiLevelCrewAI:
         # Level 1: Content Generation
         content_agents = []
         content_tasks = []
-        # improved_inputs will have user_input, reference_data, context, subject, topic
+        #system_prompt, user_prompt = get_final_prompts(content_request, HARDCODED_PROMPTS)
+
+        # Create a directory to store llm outputs
+
         for name, llm in self.llms.items():
             agent = Agent(
-                role=f"{name} Content Agent",
+                #role=f"{name} Content Agent",
+                #role=content_request.role,
+                role=f"{content_request.role} (LLM: {name})",
                 goal=(
                     f"Generate {content_request.content_type} for {content_request.target_audience} "
                     f"at {content_request.audience_level} level."
                 ),
-                backstory=f"{name} is an expert content creator.",
+                #backstory=f"{name} is an expert content creator.",
+                #backstory=system_prompt,
+                backstory=improved_inputs["system_prompt"],
                 llm=llm
             )
             content_agents.append(agent)
             content_tasks.append(Task(
                 description=(
-                    f"Create {content_request.content_type} as per the following details:\n"
+
+                    # improved_inputs will have user_input, reference_data, context, subject, topic, 
+                    #f"{user_prompt}\n"
+                    f"{improved_inputs['user_prompt']}\n"
+                    f"Create a {content_request.content_type} as per the following details:\n"
                     f"- User Input: {improved_inputs['user_input']}\n"
+                    f"- Reference Data: {improved_inputs['reference_data']}\n"
+                    f"- Context: {improved_inputs['context']}\n"
                     f"- Subject: {improved_inputs['subject']}\n"
                     f"- Topic: {improved_inputs['topic']}\n"
-                    f"- Context: {improved_inputs['context']}\n"
-                    f"- Reference Data: {improved_inputs['reference_data']}\n"
-                    f"Ensure the content is tailored for {content_request.target_audience} "
-                    f"({content_request.audience_level}) and meets the content size requirement of "
-                    f"{content_request.content_size} words."
+                    f"- Domain: {content_request.domain}\n"
+                    f"- Target Audience: {content_request.target_audience}\n"
+                    f"- Audience Level: {content_request.audience_level}\n"
+                    f"- Content Size: {content_request.content_size} words\n"
+                    f"Ensure the content is tailored for the specified domain and audience."
+                    f"Generate a **minimum 100,000-word** document with:\n"
+                        "- 10+ detailed sections\n"
+                        "- 5+ case studies per section\n"
+                        "- 20+ references\n"
+                        "- Tables and code examples"
                 ),
                 agent=agent,
                 expected_output=f"{content_request.content_type} draft."
@@ -195,6 +258,25 @@ class MultiLevelCrewAI:
         level1_agents = content_agents # for same naming convention
         level1_tasks = content_tasks
 
+        # After running llm tasks, save outputs
+        for task in content_tasks:
+            llm_name = task.agent.role.split("LLM:")[-1].strip()  # Extract LLM name from role     
+            output_llm_pdf_path = os.path.join(content_dir,f"{base_filename}_Content_{llm_name}.pdf")
+            output_llm_html_path = os.path.join(content_dir, f"{base_filename}_Content_{llm_name}.html")
+                                  
+            if task.output:
+                # Convert to HTML
+                html_text = markdown_to_html(task.output)
+
+                # Save as HTML
+                with open(output_llm_html_path, "w", encoding="utf-8") as f:
+                    f.write(html_text)
+
+                # Generate PDF from HTML
+                html_to_pdf(html_text, output_llm_pdf_path)                         
+                                               
+                                           
+        
         crew1 = Crew(agents=content_agents, tasks=content_tasks, process=Process.sequential)
         start_time1 = time.time()
         level1_results = crew1.kickoff()
@@ -216,26 +298,69 @@ class MultiLevelCrewAI:
                 log_status(log_path, level=1, agent=agent, task=task, status=status, output=output_content)  # Pass string, not TaskOutput
             except Exception as e:
                 log_status(log_path, level=1, agent=agent, task=task, status="error", error=str(e))
-
-
+                
 
         # Level 2: Consolidation
+        # Dynamically build llm_outputs dictionary
+        llm_outputs = {}
+        for task in content_tasks:
+            # Extract LLM name from the agent's role (assuming your naming convention is consistent)
+            llm_name = task.agent.role.split("LLM:")[-1].strip()
+            llm_outputs[llm_name] = task.output
+
+        # for k, v in llm_outputs.items():
+        #     print(f"KEY: {k}")
+        #     print(f"TYPE: {type(v)}")
+        #     print(f"DIR: {dir(v)}")
+        #     print(f"STR: {str(v)}")
+        #     print("===")
+
+        # Find the LLM with the largest output (by word count)
+        def get_output_text(obj):
+            return str(obj) if obj else ""
+
+        largest_llm_name = max(llm_outputs, key=lambda k: len(get_output_text(llm_outputs[k]).split()))
+        largest_output = llm_outputs[largest_llm_name]
+
         level2_agents = []
         level2_tasks = []
 
         consolidate_agent = Agent(
             role="Consolidator",
-            goal="Merge and summarize all drafts into a single article.",
-            backstory="Expert at merging content.",
+            goal="Combine, deduplicate, and expand all Level 1 LLM-generated drafts into a detailed, comprehensive document matching or exceeding the total input length.",
+            backstory="Expert at merging content, preserving all unique information, and expanding brief points to create in-depth, cohesive documents.",
+            max_tokens=32000,
             llm=self.llms["GPT"]
-            #llm=self.llms["Mistral"]
+            #llm=self.llms["GROQ_llama3"]
         )
 
+        llm_full_texts = []
+        for name, output in llm_outputs.items():
+            if name == largest_llm_name:
+                llm_full_texts.append(f"Base content ({name}):\n{output}\n")
+            else:
+                llm_full_texts.append(f"{name} content:\n{output}\n")
+
+        all_llm_content = "\n".join(llm_full_texts)
+
+
+        consolidate_description = (
+            #f"Use the {largest_llm_name} output (largest at {len(largest_output.split())} words) as the base. "
+            f"Use the {largest_llm_name} output (largest at {len(str(largest_output).split())} words) as the base. "
+            "Compare with all other LLM outputs to:\n"
+            "1. Identify unique content not in the base\n"
+            "2. Add unique content to the base\n"
+            "3. Ensure final output is LONGER than the base\n"
+            "4. Never remove content, only add\n\n"
+            f"{all_llm_content}"
+        )
+
+        # Consolidation task
         consolidate_task = Task(
-            description="Summarize and deduplicate all drafts into a single, high-quality article.",
+            description = consolidate_description,
             agent=consolidate_agent,
-            expected_output="Consolidated article.",
-            context = content_tasks
+            expected_output="Expanded consolidated draft longer than base content.",
+            context=content_tasks
         )
 
         level2_agents.append(consolidate_agent)
@@ -271,7 +396,9 @@ class MultiLevelCrewAI:
             role="Image Creator",
             goal="Generate an image for the article using DALL-E.",
             backstory="Visual expert.",
-            llm=ChatOpenAI(model="gpt-4-turbo"),  # or "gpt-4o"
+            #llm=ChatOpenAI(model="gpt-4-turbo"),  # or "gpt-4o"
+            llm=self.llms["GPT"],
+            #llm=self.llms["GROQ_llama3"],
             tools=[DallETool()]  # <-- This enables real image generation
         )
 
@@ -290,7 +417,8 @@ class MultiLevelCrewAI:
             role="Tagline & Hashtag Generator",
             goal="Create tagline, hashtags, titles, and reference URLs.",
             backstory="Marketing copy expert.",
-            llm=self.llms["GROQ_llama3"]
+            #llm=self.llms["GROQ_llama3"]
+            llm=self.llms["GPT"]
         )
         
         tag_task = Task(
@@ -330,7 +458,7 @@ class MultiLevelCrewAI:
             role="Wikipedia Search Agent",
             goal=f"Search Wikipedia for '{content_request.user_input}' and extract the most relevant summary and facts.",
             backstory="Expert at extracting precise information from Wikipedia.",
-            #llm=self.llms["Mistral"],
+            #llm=self.llms["GROQ_llama3"],
             llm=self.llms["GPT"],
             tools=[WebsiteSearchTool()]
         )
@@ -348,7 +476,7 @@ class MultiLevelCrewAI:
             role="Research Paper Search Agent",
             goal=f"Find research papers related to '{content_request.user_input}' and summarize their main findings.",
             backstory="Skilled in academic search and summarization.",
-            #llm=self.llms["Mistral"],
+            #llm=self.llms["GROQ_llama3"],
             llm=self.llms["GPT"],
             tools=[TXTSearchTool()]
         )
@@ -366,7 +494,7 @@ class MultiLevelCrewAI:
             role="YouTube Video Summary Agent",
             goal=f"Summarize the content of the YouTube video related to '{content_request.reference_data}' if a link is provided.",
             backstory="Expert at analyzing and summarizing YouTube content.",
-            #llm=self.llms["Mistral"],
+            #llm=self.llms["GROQ_llama3"],
             llm=self.llms["GPT"],
             tools=[YoutubeVideoSearchTool()]
         )
@@ -384,7 +512,7 @@ class MultiLevelCrewAI:
             role="Webpage Scraping Agent",
             goal=f"Scrape and summarize the content of the provided webpage relevant to '{content_request.reference_data}'.",
             backstory="Expert at web content extraction.",
-            #llm=self.llms["Mistral"],
+            #llm=self.llms["GROQ_llama3"],
             llm=self.llms["GPT"],
             tools=[ScrapeElementFromWebsiteTool()]
         )
@@ -434,29 +562,33 @@ class MultiLevelCrewAI:
         level4_tasks = []
 
         final_agent = Agent(
-            role="Final Formatter",
-            goal="Format all outputs into the requested content type with headings, bullets, etc.",
-            backstory="Expert formatter.",
-            llm=self.llms["GPT"]
-            #llm=self.llms["Mistral"]
+            role="Content Consolidator & Formatter",
+            goal="Merge and format all outputs into 3-4 pages of concise, non-redundant content",
+            backstory="Expert technical writer skilled at synthesizing complex information",
+            llm=self.llms["GPT"],
+            #llm=self.llms["GROQ_llama3"],
+            memory=True  # Essential for tracking cross-task context
         )
-    
 
         final_task = Task(
             description=(
-                "Take the consolidated article, image prompt/URL, tagline, hashtags, alternative titles, "
-                "and produce the final formatted output in Markdown format. "
-                "Use clear section headings (##), bullet points where appropriate, and bold for key terms. "
-                "Example:\n"
-                "## Section Title\n"
-                "- Bullet point 1\n"
-                "- Bullet point 2\n"
-                "**Bolded text**\n"
-                "Include all relevant information in a readable, professional format."
+                "Format consolidated content into 3-4 professional pages. Requirements:\n"
+                "1. Inputs: Consolidated draft + research/wiki/web/video data\n"
+                "2. Add tags, tables, and visual elements\n"
+                "3. ENSURE OUTPUT IS ≥ 4000 WORDS\n"
+                "4. If too short, expand with examples/case studies\n\n"
+                "Conditional Check:\n"
+                "IF word_count(consolidated_output) < word_count(largest_input):\n"
+                "   THROW ERROR: 'Content too short - regenerate with expansion'"
             ),
             agent=final_agent,
-            expected_output="Final, formatted content in Markdown.",
-            context=[consolidate_task, image_task, tag_task]
+            expected_output=(
+                "A final, fully formatted, and expanded document (minimum 3-4 pages, at least 4000 words) containing all required sections."
+            ),
+            #expected_output="Final 3-4 page document with ≥ 2000 words",
+            #context=[consolidate_task, research_task, wiki_task, youtube_task, webpage_task]
+            context=[consolidate_task, image_task, tag_task, wiki_task, research_task, youtube_task, webpage_task],
+            output_file="final_report.md"
         )
 
         level4_agents.append(final_agent)
@@ -497,6 +629,7 @@ class MultiLevelCrewAI:
             goal="Assess the quality, confidence, errors, and timing of all previous agent outputs.",
             backstory="An expert evaluator for AI-generated content and process quality.",
             llm=self.llms["GPT"]
+            #llm=self.llms["GROQ_llama3"]
             #llm=self.llms.get('qa') or list(self.llms.values())[0],  # Pick a suitable LLM
         )
 
@@ -556,7 +689,7 @@ class MultiLevelCrewAI:
                     and hasattr(level5_results.tasks_output[i], 'raw')
                 ):
                     output_content = level5_results.tasks_output[i].raw  # or .result
-                    print(f'level 5 output_content:', output_content) #####
+                    #print(f'level 5 output_content:', output_content) #####
                 status = "completed" if output_content else "failed"
                 log_status(log_path, level=5, agent=agent, task=task, status=status, output=output_content)  # Pass string, not TaskOutput
             except Exception as e:
@@ -591,15 +724,28 @@ class MultiLevelCrewAI:
                 content_length = len(content_str) if content_str else None
                 #content_length = len(output) if output else None
                 status = "Executed" if content_str else "Not Executed"
+                # dashboard_records.append({
+                #     "Level": level,
+                #     "Agent": agent.role,
+                #     "Task": task.description,
+                #     "Status": status,
+                #     "Content Length": content_length,
+                #     #"Output Preview": output[:100] if output else None,
+                #     "Output Preview": content_str[:100] if content_str else None,
+                #     # Add quality/confidence/error/time as available
+                # })
+
                 dashboard_records.append({
                     "Level": level,
                     "Agent": agent.role,
                     "Task": task.description,
                     "Status": status,
                     "Content Length": content_length,
-                    #"Output Preview": output[:100] if output else None,
                     "Output Preview": content_str[:100] if content_str else None,
-                    # Add quality/confidence/error/time as available
+                    "Quality": None,  # Initialize keys
+                    "Confidence": None,
+                    "Errors": None,
+                    "Suggestions": None
                 })
 
 
@@ -610,7 +756,9 @@ class MultiLevelCrewAI:
 
         qa_raw = getattr(level5_results, "raw", "[]")
         # Remove Markdown code block if present
-        qa_raw_clean = re.sub(r"^``````$", "", qa_raw.strip(), flags=re.MULTILINE).strip()
+        # Remove opening and closing Markdown code block markers (```json or `````` at end)
+        qa_raw_clean = re.sub(r"^```(?:json)?\n?|```$", "", qa_raw.strip(), flags=re.MULTILINE).strip()  # gemini
+
         try:
             qa_feedback = json.loads(qa_raw_clean)
         except Exception as e:
@@ -621,24 +769,49 @@ class MultiLevelCrewAI:
         #print("QA feedback entries:", len(qa_feedback))
 
 
-        for feedback in qa_feedback:
-            print("QA feedback agent/level:", feedback.get("agent"), feedback.get("level"))
-            for record in dashboard_records:
-                print("Dashboard record agent/level:", record["Agent"], record["Level"])
-                # Convert level to integer if necessary
-                qa_level = feedback.get("level")
-                if isinstance(qa_level, str) and qa_level.startswith("Level "):
-                    qa_level = int(qa_level.replace("Level ", "").strip())
+        # for feedback in qa_feedback:
+        #     #print("QA feedback agent/level:", feedback.get("agent"), feedback.get("level"))
+        #     for record in dashboard_records:
+        #         #print("Dashboard record agent/level:", record["Agent"], record["Level"])
+        #         # Convert level to integer if necessary
+        #         qa_level = feedback.get("level")
+        #         if isinstance(qa_level, str) and qa_level.startswith("Level "):
+        #             qa_level = int(qa_level.replace("Level ", "").strip())
                 
-                # Check level and agent name match
-                if (record["Level"] == qa_level and 
-                    feedback.get("agent", "").strip().lower() in record["Agent"].lower()):
+        #         # Check level and agent name match
+        #         if (record["Level"] == qa_level and 
+        #             feedback.get("agent", "").strip().lower() in record["Agent"].lower()):
                     
-                    # Update dashboard record with QA data
-                    record["Quality"] = feedback.get("quality")
-                    record["Confidence"] = feedback.get("confidence")
-                    record["Errors"] = feedback.get("errors")
-                    record["Suggestions"] = feedback.get("suggestions")
+        #             # Update dashboard record with QA data
+        #             record["Quality"] = feedback.get("quality")
+        #             record["Confidence"] = feedback.get("confidence")
+        #             record["Errors"] = feedback.get("errors")
+        #             record["Suggestions"] = feedback.get("suggestions")
+
+        for feedback in qa_feedback:
+            qa_level = feedback.get("level")
+            qa_agent = feedback.get("agent", "").strip().replace(" ", "")  # Normalize whitespace
+            
+            for record in dashboard_records:
+                # Convert QA level to match dashboard: Level 1 → Level 2
+                dashboard_level = qa_level + 1 if isinstance(qa_level, int) else qa_level
+                
+                # Normalize record agent name
+                record_agent = record["Agent"].replace(" ", "")
+                
+                if (record["Level"] == dashboard_level and qa_agent in record_agent):  # Substring match
+                    print("Match found! Updating record.")
+                    record.update({
+                        "Quality": feedback.get("quality"),
+                        "Confidence": feedback.get("confidence"),
+                        "Errors": feedback.get("errors"),
+                        "Suggestions": feedback.get("suggestions")
+                    })
+
+                    print(f"Checking: QA Level={qa_level} → Dashboard Level={dashboard_level}")
+                    print(f"QA Agent='{qa_agent}' vs Record Agent='{record_agent}'")
+
+
 
 
         # Save all outputs for reference/cross-verification

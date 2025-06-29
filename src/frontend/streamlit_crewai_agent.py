@@ -25,6 +25,11 @@ content_type1 = st.sidebar.selectbox("Content Type", ["Blog", "Training Contents
 topic1 = st.sidebar.text_input("Topic", placeholder='e.g., GenAI, AIML')
 role1 = st.sidebar.selectbox("Agent Role", ["Blog expert", "Tester", "Training Content Creator"])
 
+domain1 = st.text_input("Domain of topic", placeholder='Domain of the content (e.g., healthcare, cloud)')
+system_prompt1 = st.text_input("System Prompt", placeholder='System prompt to create the content, which will help in building the backstory')
+user_prompt1 = st.text_input("User Prompt", placeholder='User prompt to create the content, which will help in creating the content')
+
+
 st.write("Debug input values:", {
     "user_input": user_input1,
     "reference_data": reference_data1,
@@ -35,7 +40,10 @@ st.write("Debug input values:", {
     "audience_level": audience_level1,
     "content_type": content_type1,
     "topic": topic1,
-    "role": role1
+    "role": role1,
+    "domain": domain1,
+    "system_prompt": system_prompt1,
+    "user_prompt": user_prompt1
 })
 
 content_request = ContentRequest(
@@ -48,7 +56,10 @@ content_request = ContentRequest(
             audience_level=audience_level1,
             content_type=content_type1,
             topic=topic1,
-            role=role1
+            role=role1,
+            domain=domain1,
+            system_prompt=system_prompt1,
+            user_prompt=user_prompt1
         )
 
 if st.button("Generate Content"):

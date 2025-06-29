@@ -1,17 +1,23 @@
-# Ignore Python virtual environments
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
 .venv/
 venv/
 env/
 
-# Ignore environment variable files
+# Environment variables
 .env
 
-# Ignore output and archive folders
+# Database and output files
+*.sqlite3
+*.bin
 output/
 archive/
 testing/
+db/
+frontend/db/
 
-# Ignore Python cache
-__pycache__/
-*.pyc
-
+# Lock files (optional)
+uv.lock

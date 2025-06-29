@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Annotated
+from typing import Literal, Annotated, Optional
 import os
 
 
@@ -10,6 +10,9 @@ class ContentRequest(BaseModel):
     context: Annotated[str, Field(..., description='Context for content creation')]
     subject: Annotated[str, Field(..., description='Subject of the content')]
     topic: Annotated[str, Field(..., description='Content topic')]
+    domain: Annotated[str, Field(..., description='Domain of the content (e.g., healthcare, cloud)')]
+    system_prompt: Optional[str] = Field(None, description='Custom system prompt (optional)')
+    user_prompt: Optional[str] = Field(None, description='Custom user prompt (optional)')
     content_size: Annotated[int, Field(..., gt=100, lt=1000000, description='Content size in words')]
     target_audience: Annotated[Literal["Doctors", "General Public", "Engineers"], Field(..., description='Target audience')]
     audience_level: Annotated[Literal["Beginner", "Intermediate", "Expert"], Field(..., description='Audience expertise level')]
@@ -22,6 +25,9 @@ class ImprovedInputs(BaseModel):
     context: Annotated[str, Field(..., description='Context for content creation')]
     subject: Annotated[str, Field(..., description='Subject of the content')]
     topic: Annotated[str, Field(..., description='Content topic')]
+    domain: Annotated[str, Field(..., description='Domain of the content (e.g., healthcare, cloud)')]
+    system_prompt: Annotated[str, Field(..., description='Custom system prompt')]
+    user_prompt: Annotated[str, Field(...,  description='Custom user prompt')]
 
 class ContentResult(BaseModel):
     content_created: str = Field(..., description="Generated content")
